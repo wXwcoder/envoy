@@ -24,6 +24,11 @@ jobs:
         with:
           ref: v1.39.1
 
+      # 容器内 workspace 属主与 git/bazel 进程用户不一致会触发 "dubious ownership"，
+      # 显式声明安全目录，否则 bazel 的 workspace status 步骤会失败。
+      - name: Fix git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Run header_routing unit tests
         run: |
           bazel test --config=clang -c dbg \
