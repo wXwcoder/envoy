@@ -6,6 +6,7 @@
 #include "envoy/stats/stats_macros.h"
 
 #include "source/common/common/logger.h"
+#include "source/common/header_routing/header_parser.h"
 
 namespace Envoy {
 namespace Extensions {
