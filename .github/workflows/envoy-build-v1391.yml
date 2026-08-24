@@ -5,10 +5,12 @@ name: Envoy Build v1.39.1
 on:
   push:
     branches: [v1.39.1]
+    tags: ["v1.39.1"]
   workflow_dispatch:
 
+# tag push 时需要创建 Release 并上传二进制资产，因此需要 contents: write。
 permissions:
-  contents: read
+  contents: write
 
 # 同一分支上的新 push 自动取消进行中的 run，避免并行浪费。
 concurrency:
@@ -24,10 +26,11 @@ jobs:
       options: --user root
     timeout-minutes: 300
     steps:
-      - name: Checkout v1.39.1
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: v1.39.1
+          # tag 触发时 checkout 对应 tag，否则 checkout v1.39.1 分支。
+          ref: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.39.1' }}
 
       # 容器内 workspace 属主与 git/bazel 进程用户不一致会触发 "dubious ownership"，
       # 显式声明安全目录，否则 bazel 的 workspace status 步骤会失败。
@@ -62,3 +65,11 @@ jobs:
       - name: Verify envoy binary
         run: |
           bazel-bin/source/exe/envoy-static --version
+
+      # 仅在 tag push（v1.39.1）时创建 Release 并上传 envoy-static 二进制。
+      - name: Create Release and upload envoy binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bazel-bin/source/exe/envoy-static
+          generate_release_notes: true
