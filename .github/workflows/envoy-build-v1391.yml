@@ -1,0 +1,40 @@
+# 自定义构建 workflow：在 v1.39.1 release 分支上构建 Envoy 并运行 header_routing 单测。
+# 使用与 Envoy v1.39.0 相同的官方构建镜像（.github/config.yml 中 pin 的 sha）。
+name: Envoy Build v1.39.1
+
+on:
+  push:
+    branches: [v1.39.1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    container:
+      image: docker.io/envoyproxy/envoy-build@sha256:0b285a2c5e8fd85db238a6159f9748dac38569f081501bd508876076fecc3fe5
+      # 构建容器默认用户可能无写权限，统一以 root 运行，避免 workspace/bazel 权限问题。
+      options: --user root
+    timeout-minutes: 300
+    steps:
+      - name: Checkout v1.39.1
+        uses: actions/checkout@v4
+        with:
+          ref: v1.39.1
+
+      - name: Run header_routing unit tests
+        run: |
+          bazel test --config=clang -c dbg \
+            //test/common/header_routing/... \
+            //test/extensions/filters/network/header_routing/... \
+            //test/extensions/filters/udp/udp_proxy/session_filters/header_routing/...
+
+      - name: Build envoy binary
+        run: |
+          bazel build --config=clang -c opt //source/exe:envoy-static
+
+      - name: Verify envoy binary
+        run: |
+          bazel-bin/source/exe/envoy-static --version
