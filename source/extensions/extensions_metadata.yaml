@@ -926,6 +926,13 @@ envoy.filters.network.ext_proc:
   status: wip
   type_urls:
   - envoy.extensions.filters.network.ext_proc.v3.NetworkExternalProcessor
+envoy.filters.network.header_routing:
+  categories:
+  - envoy.filters.network
+  security_posture: robust_to_untrusted_downstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.filters.network.header_routing.v3.HeaderRouting
 envoy.filters.network.reverse_tunnel:
   categories:
   - envoy.filters.network
@@ -1106,6 +1113,13 @@ envoy.filters.udp.session.ext_authz:
   status: alpha
   type_urls:
   - envoy.extensions.filters.udp.udp_proxy.session.ext_authz.v3.FilterConfig
+envoy.filters.udp.session.header_routing:
+  categories:
+  - envoy.filters.udp.session
+  security_posture: robust_to_untrusted_downstream
+  status: alpha
+  type_urls:
+  - envoy.extensions.filters.udp.udp_proxy.session.header_routing.v3.HeaderRouting
 envoy.filters.upstream_network.reverse_tunnel_lifecycle:
   categories:
   - envoy.filters.upstream_network

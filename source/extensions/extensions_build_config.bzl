@@ -261,6 +261,7 @@ EXTENSIONS = {
     "envoy.filters.network.echo":                                 "//source/extensions/filters/network/echo:config",
     "envoy.filters.network.ext_authz":                            "//source/extensions/filters/network/ext_authz:config",
     "envoy.filters.network.ext_proc":                             "//source/extensions/filters/network/ext_proc:config",
+    "envoy.filters.network.header_routing":                      "//source/extensions/filters/network/header_routing:config",
     "envoy.filters.network.reverse_tunnel":                       "//source/extensions/filters/network/reverse_tunnel:config",
     "envoy.filters.network.reverse_tunnel_drain_aware_http_connection_manager": "//source/extensions/filters/network/reverse_tunnel/drain_aware_hcm:drain_aware_config",
     "envoy.filters.network.http_connection_manager":              "//source/extensions/filters/network/http_connection_manager:config",
@@ -294,6 +295,7 @@ EXTENSIONS = {
     "envoy.filters.udp.session.http_capsule":           "//source/extensions/filters/udp/udp_proxy/session_filters/http_capsule:config",
     "envoy.filters.udp.session.dynamic_forward_proxy":  "//source/extensions/filters/udp/udp_proxy/session_filters/dynamic_forward_proxy:config",
     "envoy.filters.udp.session.ext_authz":              "//source/extensions/filters/udp/udp_proxy/session_filters/ext_authz:config",
+    "envoy.filters.udp.session.header_routing":                 "//source/extensions/filters/udp/udp_proxy/session_filters/header_routing:config",
 
     #
     # Resource monitors
