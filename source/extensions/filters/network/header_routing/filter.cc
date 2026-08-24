@@ -89,11 +89,11 @@ void HeaderRoutingTcpFilter::setTargetFilterState(const ParsedTarget& target) {
   // 类型与 sni_dynamic_forward_proxy 读取类型严格一致：Router::StringAccessor + StreamInfo::UInt32Accessor。
   read_callbacks_->connection().streamInfo().filterState()->setData(
       "envoy.upstream.dynamic_host", std::make_shared<Router::StringAccessorImpl>(target.ip),
-      FilterState::StateType::ReadOnly, FilterState::LifeSpan::Connection);
+      StreamInfo::FilterState::StateType::ReadOnly, StreamInfo::FilterState::LifeSpan::Connection);
   read_callbacks_->connection().streamInfo().filterState()->setData(
       "envoy.upstream.dynamic_port",
       std::make_shared<StreamInfo::UInt32AccessorImpl>(target.port),
-      FilterState::StateType::ReadOnly, FilterState::LifeSpan::Connection);
+      StreamInfo::FilterState::StateType::ReadOnly, StreamInfo::FilterState::LifeSpan::Connection);
 }
 
 } // namespace HeaderRouting
