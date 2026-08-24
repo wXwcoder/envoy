@@ -58,10 +58,13 @@ ReadFilterStatus HeaderRoutingUdpFilter::onData(Network::UdpRecvData& data) {
 
   // 线性化前 8 字节用于解析；短包（< 8 字节）时视图长度收敛为实际长度，避免越界读取，
   // 不足头部长度的短包由 Parser 判 NeedMoreData。
+  // linearize 内部有 RELEASE_ASSERT(size <= length)，短包(< HeaderLength)必须收敛 peek 长度，
+  // 否则 linearize(HeaderLength) 的 size 会超出 buffer 长度而触发断言崩溃。
+  const uint64_t peek_len = std::min<uint64_t>(HeaderLength, data.buffer_->length());
   ParseResult result = Parser::parse(
       absl::string_view(
-          static_cast<const char*>(data.buffer_->linearize(HeaderLength)),
-          std::min<uint64_t>(HeaderLength, data.buffer_->length())),
+          static_cast<const char*>(data.buffer_->linearize(static_cast<uint32_t>(peek_len))),
+          peek_len),
       config_->parserConfig());
 
   switch (result.status) {
