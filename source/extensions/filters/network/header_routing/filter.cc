@@ -87,13 +87,15 @@ Network::FilterStatus HeaderRoutingTcpFilter::onData(Buffer::Instance& data, boo
 
 void HeaderRoutingTcpFilter::setTargetFilterState(const ParsedTarget& target) {
   // 类型与 sni_dynamic_forward_proxy 读取类型严格一致：Router::StringAccessor + StreamInfo::UInt32Accessor。
+  // 注意：Envoy 1.39 的 setData 签名为 (name, data, LifeSpan, StreamSharing)，无 StateType；
+  // 只读语义由读取方 getDataReadOnly 保证。
   read_callbacks_->connection().streamInfo().filterState()->setData(
       "envoy.upstream.dynamic_host", std::make_shared<Router::StringAccessorImpl>(target.ip),
-      StreamInfo::FilterState::StateType::ReadOnly, StreamInfo::FilterState::LifeSpan::Connection);
+      StreamInfo::FilterState::LifeSpan::Connection);
   read_callbacks_->connection().streamInfo().filterState()->setData(
       "envoy.upstream.dynamic_port",
       std::make_shared<StreamInfo::UInt32AccessorImpl>(target.port),
-      StreamInfo::FilterState::StateType::ReadOnly, StreamInfo::FilterState::LifeSpan::Connection);
+      StreamInfo::FilterState::LifeSpan::Connection);
 }
 
 } // namespace HeaderRouting
