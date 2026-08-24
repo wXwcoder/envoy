@@ -17,6 +17,7 @@ envoy_extension_cc_test(
     extension_names = ["envoy.filters.udp.session.header_routing"],
     rbe_pool = "6gig",
     deps = [
+        "//envoy/network:listener_interface",
         "//envoy/router:string_accessor_interface",
         "//envoy/stream_info:uint32_accessor_interface",
         "//source/common/buffer:buffer_lib",

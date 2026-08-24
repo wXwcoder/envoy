@@ -14,6 +14,7 @@
 
 using testing::_;
 using testing::NiceMock;
+using testing::Return;
 using testing::ReturnRef;
 
 namespace Envoy {
@@ -49,6 +50,8 @@ public:
     filter_ = std::make_unique<HeaderRoutingUdpFilter>(config_);
     filter_->initializeReadFilterCallbacks(callbacks_);
     ON_CALL(callbacks_, streamInfo()).WillByDefault(ReturnRef(stream_info_));
+    // 模拟"续链成功"：会话保留，filter 才能返回 Continue。
+    ON_CALL(callbacks_, continueFilterChain()).WillByDefault(Return(true));
   }
 
   // 构造数据报：header + payload。
@@ -105,14 +108,14 @@ TEST_F(HeaderRoutingUdpFilterTest, PassesThroughAfterHeaderHandled) {
   EXPECT_EQ("no-header", second.buffer_->toString());
 }
 
-// 畸形包（Magic 错）：丢弃整包 + 统计，不续链。
+// 畸形包（Magic 错）：丢弃整包 + 统计，不续链，阻断后续 filter 处理。
 TEST_F(HeaderRoutingUdpFilterTest, DropsBadMagicDatagram) {
   setup();
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData data = makeDatagram(makeHeader(0x54, 1, 0x0A000003, 8600), "game");
   EXPECT_CALL(callbacks_, continueFilterChain()).Times(0);
-  EXPECT_EQ(ReadFilterStatus::Continue, filter_->onData(data));
+  EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onData(data));
   EXPECT_EQ(0U, data.buffer_->length()); // 整包被丢弃
   EXPECT_EQ(1U, config_->stats().dropped_.value());
 }
@@ -123,7 +126,7 @@ TEST_F(HeaderRoutingUdpFilterTest, DropsBadVersionDatagram) {
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData data = makeDatagram(makeHeader(0x55, 2, 0x0A000003, 8600), "game");
-  EXPECT_EQ(ReadFilterStatus::Continue, filter_->onData(data));
+  EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onData(data));
   EXPECT_EQ(0U, data.buffer_->length());
   EXPECT_EQ(1U, config_->stats().dropped_.value());
 }
@@ -134,7 +137,7 @@ TEST_F(HeaderRoutingUdpFilterTest, DropsShortDatagram) {
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData data = makeDatagram("", "abc"); // 3 字节
-  EXPECT_EQ(ReadFilterStatus::Continue, filter_->onData(data));
+  EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onData(data));
   EXPECT_EQ(0U, data.buffer_->length());
   EXPECT_EQ(1U, config_->stats().dropped_.value());
 }

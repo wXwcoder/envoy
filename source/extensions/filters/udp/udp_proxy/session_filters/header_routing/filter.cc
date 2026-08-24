@@ -79,8 +79,10 @@ ReadFilterStatus HeaderRoutingUdpFilter::onData(Network::UdpRecvData& data) {
   case ParseResult::Status::BadMagic:
   case ParseResult::Status::BadVersion:
     // 丢包 + 统计；客户端应重发带头包（"确认前带头"自愈）。
+    // 注意：返回 StopIteration 终止外层 onData 循环，避免被排空的空数据报
+    // 继续流向 DFP/上游（否则 writeUpstream 会发出 0 字节数据报）。
     dropDatagram(data);
-    return ReadFilterStatus::Continue;
+    return ReadFilterStatus::StopIteration;
   }
   PANIC_DUE_TO_CORRUPT_ENUM;
 }

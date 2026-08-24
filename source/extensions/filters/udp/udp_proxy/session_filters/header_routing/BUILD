@@ -14,7 +14,10 @@ envoy_cc_library(
     srcs = ["filter.cc"],
     hdrs = ["filter.h"],
     deps = [
+        "//envoy/buffer:buffer_interface",
+        "//envoy/common:exception_lib",
         "//envoy/network:filter_interface",
+        "//envoy/network:listener_interface",
         "//envoy/server:filter_config_interface",
         "//envoy/stats:stats_macros",
         "//envoy/stream_info:filter_state_interface",
@@ -24,6 +27,7 @@ envoy_cc_library(
         "//source/common/header_routing:header_parser_lib",
         "//source/common/router:string_accessor_lib",
         "//source/common/stream_info:uint32_accessor_lib",
+        "@abseil-cpp//absl/strings",
         "@envoy_api//envoy/extensions/filters/udp/udp_proxy/session/header_routing/v3:pkg_cc_proto",
     ],
 )

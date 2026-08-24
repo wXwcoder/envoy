@@ -14,6 +14,8 @@ envoy_cc_library(
     srcs = ["filter.cc"],
     hdrs = ["filter.h"],
     deps = [
+        "//envoy/buffer:buffer_interface",
+        "//envoy/common:exception_lib",
         "//envoy/network:connection_interface",
         "//envoy/network:filter_interface",
         "//envoy/server:filter_config_interface",
@@ -37,7 +39,6 @@ envoy_cc_extension(
         ":filter_lib",
         "//envoy/registry",
         "//envoy/server:filter_config_interface",
-        "//source/extensions/filters/network:well_known_names",
         "//source/extensions/filters/network/common:factory_base_lib",
         "@envoy_api//envoy/extensions/filters/network/header_routing/v3:pkg_cc_proto",
     ],

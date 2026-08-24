@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# 同一分支上的新 push 自动取消进行中的 run，避免并行浪费。
+concurrency:
+  group: envoy-build-v1391-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-22.04
@@ -28,6 +33,20 @@ jobs:
       # 显式声明安全目录，否则 bazel 的 workspace status 步骤会失败。
       - name: Fix git safe.directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # 用 GitHub Actions 缓存持久化 bazel 磁盘缓存，避免每次 run 全量重编译。
+      - name: Cache bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/bazel-disk
+          key: envoy-bazel-disk-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            envoy-bazel-disk-${{ runner.os }}-
+
+      - name: Configure bazel disk cache
+        run: |
+          mkdir -p /root/.cache/bazel-disk
+          echo "common --disk_cache=/root/.cache/bazel-disk" > /root/.bazelrc
 
       - name: Run header_routing unit tests
         run: |
