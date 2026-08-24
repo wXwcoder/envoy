@@ -82,7 +82,7 @@ TEST_F(HeaderRoutingUdpFilterTest, ParsesAndStripsHeaderOnFirstDatagram) {
   EXPECT_EQ(4U, data.buffer_->length());
   EXPECT_EQ("game", data.buffer_->toString());
   // filter state 已写入 DFP 读取的键（类型一致）。
-  const auto* host = stream_info_.filterState()->getDataReadOnly<Router::StringAccessor>(
+  const auto* host = stream_info_.filterState()->getDataReadOnly<::Envoy::Router::StringAccessor>(
       "envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.3", host->asString());
@@ -151,7 +151,7 @@ TEST_F(HeaderRoutingUdpFilterTest, UsesCustomMagicAndVersion) {
   EXPECT_CALL(callbacks_, continueFilterChain()).Times(1);
   EXPECT_EQ(ReadFilterStatus::Continue, filter_->onData(data));
   EXPECT_EQ(4U, data.buffer_->length());
-  const auto* host = stream_info_.filterState()->getDataReadOnly<Router::StringAccessor>(
+  const auto* host = stream_info_.filterState()->getDataReadOnly<::Envoy::Router::StringAccessor>(
       "envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.4", host->asString());

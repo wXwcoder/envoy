@@ -65,7 +65,7 @@ TEST_F(HeaderRoutingTcpFilterTest, ParsesAndStripsHeaderOnFirstData) {
   EXPECT_EQ("game", buffer.toString());
   // filter state 已写入 sni_dynamic_forward_proxy 读取的键（类型一致）。
   const auto* host = callbacks_.connection_.stream_info_.filterState()
-                         ->getDataReadOnly<Router::StringAccessor>("envoy.upstream.dynamic_host");
+                         ->getDataReadOnly<::Envoy::Router::StringAccessor>("envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.3", host->asString());
   const auto* port = callbacks_.connection_.stream_info_.filterState()
@@ -150,7 +150,7 @@ TEST_F(HeaderRoutingTcpFilterTest, UsesCustomMagicAndVersion) {
   EXPECT_CALL(callbacks_, continueReading()).Times(1);
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(buffer, false));
   const auto* host = callbacks_.connection_.stream_info_.filterState()
-                         ->getDataReadOnly<Router::StringAccessor>("envoy.upstream.dynamic_host");
+                         ->getDataReadOnly<::Envoy::Router::StringAccessor>("envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.4", host->asString());
 }

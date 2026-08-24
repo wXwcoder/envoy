@@ -243,7 +243,9 @@ public:
     case ParseResult::Status::BadMagic:
     case ParseResult::Status::BadVersion:
       dropDatagram();                              // 丢包 + 统计；客户端应重发带头包
-      return ReadFilterStatus::Continue;
+      // 返回 StopIteration：整包已排空，终止外层 onData 循环，
+      // 避免被排空的 0 字节数据报继续流向 DFP/上游（否则 writeUpstream 发出空包）。
+      return ReadFilterStatus::StopIteration;
     }
   }
 
@@ -256,14 +258,16 @@ private:
 
 ```cpp
 // 设置 DFP 读取的目标地址（类型与 DFP 读取类型严格一致）
+// Envoy 1.39 的 setData 签名：(name, data, LifeSpan, StreamSharing)，无 StateType 参数；
+// 只读语义由读取方 getDataReadOnly 保证。
 streamInfo().filterState()->setData(
     "envoy.upstream.dynamic_host",
     std::make_shared<Router::StringAccessorImpl>(target.ip),
-    FilterState::StateType::ReadOnly, FilterState::LifeSpan::FilterChain);
+    FilterState::LifeSpan::FilterChain);
 streamInfo().filterState()->setData(
     "envoy.upstream.dynamic_port",
     std::make_shared<StreamInfo::UInt32AccessorImpl>(target.port),
-    FilterState::StateType::ReadOnly, FilterState::LifeSpan::FilterChain);
+    FilterState::LifeSpan::FilterChain);
 ```
 
 ### 7.3 已验证时序（两种路径均正确）
