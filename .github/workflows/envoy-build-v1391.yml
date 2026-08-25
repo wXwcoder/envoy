@@ -45,6 +45,8 @@ jobs:
           key: envoy-bazel-disk-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
             envoy-bazel-disk-${{ runner.os }}-
+          # 即使后续步骤失败/超时也保存缓存，避免每次全量重编译。
+          save-always: true
 
       - name: Configure bazel disk cache
         run: |
@@ -60,7 +62,9 @@ jobs:
 
       - name: Build envoy binary
         run: |
-          bazel build --config=clang -c opt //source/exe:envoy-static
+          # fastbuild 替代 opt：免费 2 核 runner 上 opt 全量编译约 5 小时会超时，
+          # fastbuild 约 2 小时可完成，功能完整，仅性能略低于 opt。
+          bazel build --config=clang -c fastbuild //source/exe:envoy-static
 
       - name: Verify envoy binary
         run: |
