@@ -404,6 +404,9 @@ listeners:
 clusters:
 - name: room_dynamic
   connect_timeout: 5s
+  # dynamic_forward_proxy 是 cluster 自带 LB 类型，必须显式声明 CLUSTER_PROVIDED，
+  # 否则 cluster manager 校验报 "cluster provided LB not specified"。
+  lb_policy: CLUSTER_PROVIDED
   cluster_type:
     name: envoy.clusters.dynamic_forward_proxy
     typed_config:
