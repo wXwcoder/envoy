@@ -70,8 +70,13 @@ Network::FilterStatus HeaderRoutingTcpFilter::onData(Buffer::Instance& data, boo
     data.drain(HeaderLength);
     setTargetFilterState(result.target.value());
     header_handled_ = true;
+    // continueReading() 已递归接管后续 filter（sni_dynamic_forward_proxy → tcp_proxy）：
+    //  - DNS 命中（InCache）时同步完成后续链路与首包转发；
+    //  - DNS 异步（Loading）时由 onLoadDnsCacheComplete 回调续链。
+    // 故此处返回 StopIteration，避免外层循环重复推进到 tcp_proxy，
+    // 导致其在 sni 尚未完成 DNS 解析、DFP cluster 无 host 时被提前初始化而失败。
     read_callbacks_->continueReading();
-    return Network::FilterStatus::Continue;
+    return Network::FilterStatus::StopIteration;
   case ParseResult::Status::NeedMoreData:
     // 理论上到达此处时长度已 >= HeaderLength，此处防御性兜底：等待更多数据。
     return Network::FilterStatus::StopIteration;
