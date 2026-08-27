@@ -28,6 +28,14 @@ func buildHeader(roomIP string, roomPort uint16) ([]byte, error) {
 	return header, nil
 }
 
+// 头部添加模式：控制客户端发送的每个数据包是否都带 8B 协议头。
+//   - all（默认）：所有包都带头，与 Envoy forward_header=true（头部透传）配套；
+//   - first：仅首包带头，后续包不带（与 Envoy forward_header=false（剥头）配套）。
+const (
+	HeaderModeAll   = "all"
+	HeaderModeFirst = "first"
+)
+
 // Client 客户端接口
 type Client interface {
 	Connect() error
@@ -35,19 +43,20 @@ type Client interface {
 	Close()
 }
 
-// UDPClient UDP客户端（契约：确认前带头、确认后停）
+// UDPClient UDP客户端（头部模式：all=每包带头 / first=仅首包带头）
 type UDPClient struct {
 	ServerHost string
 	ServerPort int
 	RoomIP     string
 	RoomPort   uint16
 	Conn       *net.UDPConn
-	confirmed  bool // 是否已收到房间首响应
+	headerMode string // all=所有包带头；first=仅首包带头
+	headerSent bool   // 已发送过带头包（first 模式用）
 }
 
 // NewUDPClient 创建新的UDP客户端
-func NewUDPClient(host string, port int, roomIP string, roomPort uint16) *UDPClient {
-	return &UDPClient{ServerHost: host, ServerPort: port, RoomIP: roomIP, RoomPort: roomPort}
+func NewUDPClient(host string, port int, roomIP string, roomPort uint16, headerMode string) *UDPClient {
+	return &UDPClient{ServerHost: host, ServerPort: port, RoomIP: roomIP, RoomPort: roomPort, headerMode: headerMode}
 }
 
 // Connect 连接到Envoy的UDP监听端口
@@ -66,17 +75,19 @@ func (c *UDPClient) Connect() error {
 	return nil
 }
 
-// SendMessage 发送消息：未确认前前置 8B 头，确认后只发纯数据。
-// 收到房间首响应即置 confirmed，验证 Envoy 的"确认前带头、确认后停"契约。
+// SendMessage 发送消息：按 headerMode 决定是否带头。
+//   - all：每个数据包都前置 8B 头（验证 Envoy forward_header=true 头部透传）；
+//   - first：仅首包带头，之后只发纯数据（验证"仅首包选路"契约）。
 func (c *UDPClient) SendMessage(message string) (string, error) {
 	payload := []byte(message)
-	withHeader := !c.confirmed
+	withHeader := c.headerMode == HeaderModeAll || !c.headerSent
 	if withHeader {
 		header, err := buildHeader(c.RoomIP, c.RoomPort)
 		if err != nil {
 			return "", err
 		}
 		payload = append(header, payload...)
+		c.headerSent = true
 	}
 	if _, err := c.Conn.Write(payload); err != nil {
 		return "", fmt.Errorf("发送消息失败: %v", err)
@@ -88,7 +99,6 @@ func (c *UDPClient) SendMessage(message string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("接收响应失败: %v", err)
 	}
-	c.confirmed = true // 收到房间首响应即确认，之后不再带头
 	return string(buffer[:n]), nil
 }
 
@@ -100,7 +110,7 @@ func (c *UDPClient) Close() {
 	}
 }
 
-// TCPClient TCP客户端（契约：连接后一次性带头，之后不带头）
+// TCPClient TCP客户端（头部模式：all=每包带头 / first=仅首包带头）
 type TCPClient struct {
 	ServerHost string
 	ServerPort int
@@ -108,12 +118,13 @@ type TCPClient struct {
 	RoomPort   uint16
 	Conn       net.Conn
 	Reader     *bufio.Reader
-	headerSent bool // 是否已发送头部（仅首次带头）
+	headerMode string // all=所有包带头；first=仅首包带头
+	headerSent bool   // 已发送过带头包（first 模式用）
 }
 
 // NewTCPClient 创建新的TCP客户端
-func NewTCPClient(host string, port int, roomIP string, roomPort uint16) *TCPClient {
-	return &TCPClient{ServerHost: host, ServerPort: port, RoomIP: roomIP, RoomPort: roomPort}
+func NewTCPClient(host string, port int, roomIP string, roomPort uint16, headerMode string) *TCPClient {
+	return &TCPClient{ServerHost: host, ServerPort: port, RoomIP: roomIP, RoomPort: roomPort, headerMode: headerMode}
 }
 
 // Connect 连接到Envoy的TCP监听端口
@@ -129,11 +140,14 @@ func (c *TCPClient) Connect() error {
 	return nil
 }
 
-// SendMessage 发送消息：连接后首次发送时前置 8B 头（仅一次），之后只发纯数据。
+// SendMessage 发送消息：按 headerMode 决定是否带头。
+//   - all：每个数据包都前置 8B 头（验证 Envoy forward_header=true 头部透传）；
+//   - first：仅首包带头，之后只发纯数据。
+//
 // 复用 Reader 避免丢失缓冲；服务器按行回复，读一行作为响应。
 func (c *TCPClient) SendMessage(message string) (string, error) {
 	payload := []byte(message + "\n")
-	withHeader := !c.headerSent
+	withHeader := c.headerMode == HeaderModeAll || !c.headerSent
 	if withHeader {
 		header, err := buildHeader(c.RoomIP, c.RoomPort)
 		if err != nil {
@@ -178,6 +192,8 @@ func main() {
 	protocol := flag.String("protocol", envOr("PROTOCOL", "udp"), "协议模式: udp/tcp/both")
 	roomIP := flag.String("room-ip", envOr("ROOM_IP", ""), "目标房间服务器IP")
 	roomPort := flag.Uint("room-port", 0, "目标房间服务器端口")
+	headerMode := flag.String("header-mode", envOr("HEADER_MODE", HeaderModeAll), "头部模式: all=所有包带头 / first=仅首包带头")
+	ping := flag.Bool("ping", false, "是否发送 PING 消息")
 	flag.Parse()
 
 	if *roomIP == "" || *roomPort == 0 {
@@ -188,20 +204,25 @@ func main() {
 	if proto != "udp" && proto != "tcp" && proto != "both" {
 		log.Fatalf("❌ 无效的协议模式: %s（支持 udp/tcp/both）", *protocol)
 	}
+	hm := strings.ToLower(*headerMode)
+	if hm != HeaderModeAll && hm != HeaderModeFirst {
+		log.Fatalf("❌ 无效的头部模式: %s（支持 %s=%s 所有包带头 / %s=仅首包带头）", *headerMode, HeaderModeAll, HeaderModeAll, HeaderModeFirst)
+	}
 
 	log.Printf("🚀 Envoy HeaderRouting 测试客户端")
 	log.Printf("================================")
 	log.Printf("📡 Envoy地址: %s (UDP:%d / TCP:%d)", *host, *udpPort, *tcpPort)
 	log.Printf("🎯 房间服务器: %s:%d", *roomIP, *roomPort)
+	log.Printf("🧭 头部模式: %s（%s）", hm, map[string]string{HeaderModeAll: "所有包带头", HeaderModeFirst: "仅首包带头"}[hm])
 
 	// 按协议模式创建并连接客户端
 	var clients []Client
 	roomPort16 := uint16(*roomPort)
 	if proto == "udp" || proto == "both" {
-		clients = append(clients, NewUDPClient(*host, *udpPort, *roomIP, roomPort16))
+		clients = append(clients, NewUDPClient(*host, *udpPort, *roomIP, roomPort16, hm))
 	}
 	if proto == "tcp" || proto == "both" {
-		clients = append(clients, NewTCPClient(*host, *tcpPort, *roomIP, roomPort16))
+		clients = append(clients, NewTCPClient(*host, *tcpPort, *roomIP, roomPort16, hm))
 	}
 	for _, client := range clients {
 		if err := client.Connect(); err != nil {
@@ -216,11 +237,15 @@ func main() {
 
 	// 自动发送一轮测试消息：
 	// PING（建会话）/ BATTLE（战斗消息）/ STATUS（状态消息）/ PING（验证确认后不带头）
+	// -ping 模式下仅发送 PING，用于单独验证建会话与"确认后不带头"契约
 	testMessages := []string{
 		"PING",
 		"BATTLE attack enemy-123",
 		"STATUS",
 		"PING",
+	}
+	if *ping {
+		testMessages = []string{"PING", "PING"}
 	}
 	for _, msg := range testMessages {
 		for i, client := range clients {
