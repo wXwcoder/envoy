@@ -36,10 +36,12 @@ std::string makeHeader(uint8_t magic, uint8_t version, uint32_t ip, uint16_t por
 
 class HeaderRoutingTcpFilterTest : public testing::Test {
 public:
-  void setup(uint32_t magic = 0x55, uint32_t version = 1) {
+  void setup(uint32_t magic = 0x55, uint32_t version = 1, bool forward_header = true) {
     envoy::extensions::filters::network::header_routing::v3::HeaderRouting proto_config;
     proto_config.set_magic(magic);
     proto_config.set_version(version);
+    // 默认参数与产品默认（true=透传头部）对齐；剥离语义的用例显式传 false。
+    proto_config.set_forward_header(forward_header);
     config_ = std::make_shared<HeaderRoutingTcpFilterConfig>(proto_config, context_);
     filter_ = std::make_unique<HeaderRoutingTcpFilter>(config_);
     filter_->initializeReadFilterCallbacks(callbacks_);
@@ -51,9 +53,9 @@ public:
   NiceMock<Network::MockReadFilterCallbacks> callbacks_;
 };
 
-// ① 阻断 + 完整头一次到达：剥离头部、写 filter state、续链恰好一次。
+// ① 阻断 + 完整头一次到达：剥离头部（forward_header=false）、写 filter state、续链恰好一次。
 TEST_F(HeaderRoutingTcpFilterTest, ParsesAndStripsHeaderOnFirstData) {
-  setup();
+  setup(0x55, 1, false);
   EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onNewConnection());
 
   Buffer::OwnedImpl buffer(makeHeader(0x55, 1, 0x0A000003, 8600) + "game");
@@ -78,7 +80,7 @@ TEST_F(HeaderRoutingTcpFilterTest, ParsesAndStripsHeaderOnFirstData) {
 // 头部跨 segment 累积：同一连接读缓冲追加数据（模拟 TCP 字节流天然累积），
 // 首段不足 8 字节时返回 StopIteration 且不清空缓冲，补齐后解析并续链。
 TEST_F(HeaderRoutingTcpFilterTest, AccumulatesPartialHeaderAcrossSegments) {
-  setup();
+  setup(0x55, 1, false);
   EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onNewConnection());
 
   Buffer::OwnedImpl buffer(makeHeader(0x55, 1, 0x0A000003, 8600).substr(0, 5)); // 前 5 字节
@@ -95,7 +97,7 @@ TEST_F(HeaderRoutingTcpFilterTest, AccumulatesPartialHeaderAcrossSegments) {
 
 // 头部已处理：后续数据透传，不再解析/剥离/续链。
 TEST_F(HeaderRoutingTcpFilterTest, PassesThroughAfterHeaderHandled) {
-  setup();
+  setup(0x55, 1, false);
   EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onNewConnection());
 
   Buffer::OwnedImpl first(makeHeader(0x55, 1, 0x0A000003, 8600) + "game");
@@ -143,7 +145,7 @@ TEST_F(HeaderRoutingTcpFilterTest, ClosesConnectionOnEndStreamWithPartialHeader)
 
 // 自定义 magic/version 配置生效：默认配置下该头为畸形，自定义配置下可解析。
 TEST_F(HeaderRoutingTcpFilterTest, UsesCustomMagicAndVersion) {
-  setup(0xAA, 3);
+  setup(0xAA, 3, false);
   EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onNewConnection());
 
   Buffer::OwnedImpl buffer(makeHeader(0xAA, 3, 0x0A000004, 9000) + "game");
@@ -153,6 +155,41 @@ TEST_F(HeaderRoutingTcpFilterTest, UsesCustomMagicAndVersion) {
                          ->getDataReadOnly<::Envoy::Router::StringAccessor>("envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.4", host->asString());
+}
+
+// forward_header=true：解析选路后保留 8B 头，头部连同游戏数据原样转发给上游。
+TEST_F(HeaderRoutingTcpFilterTest, ForwardsHeaderWhenConfigured) {
+  setup(); // 默认 true（透传头部）
+  EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onNewConnection());
+
+  const std::string header = makeHeader(0x55, 1, 0x0A000003, 8600);
+  Buffer::OwnedImpl buffer(header + "game");
+  EXPECT_CALL(callbacks_, continueReading()).Times(1);
+  EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(buffer, false));
+
+  // 头部保留：8B 头 + 4B 游戏数据原样留在连接读缓冲（不剥离）。
+  EXPECT_EQ(12U, buffer.length());
+  EXPECT_EQ(header + "game", buffer.toString());
+  // filter state 仍写入选路信息。
+  const auto* host = callbacks_.connection_.stream_info_.filterState()
+                         ->getDataReadOnly<::Envoy::Router::StringAccessor>("envoy.upstream.dynamic_host");
+  ASSERT_NE(nullptr, host);
+  EXPECT_EQ("10.0.0.3", host->asString());
+  const auto* port = callbacks_.connection_.stream_info_.filterState()
+                         ->getDataReadOnly<StreamInfo::UInt32Accessor>(
+                             "envoy.upstream.dynamic_port");
+  ASSERT_NE(nullptr, port);
+  EXPECT_EQ(8600, port->value());
+}
+
+// 未配置 forward_header 字段：走产品默认 true（透传头部）分支。
+TEST_F(HeaderRoutingTcpFilterTest, DefaultsToForwardingHeader) {
+  envoy::extensions::filters::network::header_routing::v3::HeaderRouting proto_config;
+  proto_config.set_magic(0x55);
+  proto_config.set_version(1);
+  // 故意不设置 forward_header：验证 has_forward_header()==false 时默认 true。
+  config_ = std::make_shared<HeaderRoutingTcpFilterConfig>(proto_config, context_);
+  EXPECT_TRUE(config_->parserConfig().forward_header);
 }
 
 } // namespace

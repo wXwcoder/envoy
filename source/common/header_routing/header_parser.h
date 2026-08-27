@@ -21,6 +21,10 @@ constexpr size_t PortOffset = 6;     // RoomPort 字段偏移
 struct HeaderRoutingConfig {
   uint8_t magic{0x55};  // Magic 字节，默认 0x55，防误判
   uint8_t version{1};   // 协议版本，默认 1
+  // 是否把 8 字节协议头原封不动转发给上游（UDP/TCP proto 字段 forward_header）：
+  //  - true（默认）：Envoy 解析头部仅用于选路，之后保留头部，头部连同游戏数据一起转发；
+  //  - false：解析选路后剥离头部，只把游戏数据转发给上游。
+  bool forward_header{true};
 };
 
 // 解析出的目标地址：直接给"规范化字符串 IP + 端口"，适配器无需再转换。

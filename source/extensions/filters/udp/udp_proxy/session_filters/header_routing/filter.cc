@@ -42,6 +42,10 @@ HeaderRoutingUdpFilterConfig::HeaderRoutingUdpFilterConfig(
       proto_config.has_magic() ? static_cast<uint8_t>(proto_config.magic()) : 0x55;
   parser_config_.version =
       proto_config.has_version() ? static_cast<uint8_t>(proto_config.version()) : 1;
+  // forward_header 默认 true：解析选路后保留 8B 头原样转发给上游；
+  // 显式配置 false 时剥离头部，仅转发游戏数据。
+  parser_config_.forward_header =
+      proto_config.has_forward_header() ? proto_config.forward_header() : true;
 }
 
 ReadFilterStatus HeaderRoutingUdpFilter::onNewSession() {
@@ -69,8 +73,12 @@ ReadFilterStatus HeaderRoutingUdpFilter::onData(Network::UdpRecvData& data) {
 
   switch (result.status) {
   case ParseResult::Status::Ok:
-    // ② 解析成功：剥离协议头、写 filter state、续链触发 DFP 选上游。
-    data.buffer_->drain(HeaderLength);
+    // ② 解析成功：写 filter state、续链触发 DFP 选上游。
+    // forward_header=true（默认）保留 8B 头原样转发给上游；
+    // forward_header=false 时剥离协议头，仅转发游戏数据。
+    if (!config_->parserConfig().forward_header) {
+      data.buffer_->drain(HeaderLength);
+    }
     setTargetFilterState(result.target.value());
     header_handled_ = true; // 只允许续链一次
     // 续链返回 false 表示会话已被移除（如 DFP 选上游失败），停止继续处理。

@@ -28,6 +28,11 @@ static_resources:
             "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.session.header_routing.v3.HeaderRouting
             magic: 85
             version: 1
+            # forward_header 控制 8B 协议头是否原样转发给上游：
+            #  - true（默认）：解析选路后保留头部，8B 头连同游戏数据一起原样转发给上游；
+            #  - false：剥离 8B 头，仅转发游戏数据（当前测试显式 false，与 client/game-server
+            #    的"确认前带头、确认后停"契约配套；验证头部剥离正确性）。
+            forward_header: false
         - name: envoy.filters.udp.session.dynamic_forward_proxy
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.session.dynamic_forward_proxy.v3.FilterConfig
@@ -51,6 +56,11 @@ static_resources:
           "@type": type.googleapis.com/envoy.extensions.filters.network.header_routing.v3.HeaderRouting
           magic: 85
           version: 1
+          # forward_header 控制 8B 协议头是否原样转发给上游：
+          #  - true（默认）：解析选路后保留头部，8B 头连同游戏数据一起原样转发给上游；
+          #  - false：剥离 8B 头，仅转发游戏数据（当前测试显式 false，与 client/game-server
+          #    的"确认前带头、确认后停"契约配套；验证头部剥离正确性）。
+          forward_header: false
       - name: envoy.filters.network.sni_dynamic_forward_proxy
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig

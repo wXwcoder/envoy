@@ -158,6 +158,10 @@ constexpr size_t PortOffset = 6;     // RoomPort 字段偏移
 struct HeaderRoutingConfig {
   uint8_t magic;    // Magic 字节，默认 0x55，防误判
   uint8_t version;  // 协议版本，默认 1
+  // 是否把 8 字节协议头原封不动转发给上游（UDP/TCP proto 均新增可选字段 forward_header）：
+  //  - true（默认）：Envoy 解析头部仅用于选路，之后保留头部，头部连同游戏数据一起转发给上游；
+  //  - false：解析选路后剥离头部，只把游戏数据转发给上游。
+  bool forward_header{true};
   // 未来头部格式变更在此扩展字段，适配器无需改动
 };
 ```
@@ -234,7 +238,11 @@ public:
     auto result = HeaderParser::parse(data.buffer_->linearize(HeaderLength), config_);
     switch (result.status) {
     case ParseResult::Status::Ok:
-      data.buffer_->drain(HeaderLength);           // 剥离协议头
+      // forward_header=true（默认）保留协议头，原样转发给上游；
+      // forward_header=false 时剥离协议头，仅转发游戏数据。
+      if (!config_.forward_header) {
+        data.buffer_->drain(HeaderLength);           // 剥离协议头
+      }
       setTargetFilterState(result.target.value()); // 设 dynamic_host/port
       header_handled_ = true;                      // 只允许续链一次
       read_callbacks_->continueFilterChain();      // ③ 续链：触发 DFP.onNewSession 读状态
@@ -311,7 +319,11 @@ public:
         pending_buffer_.linearize(HeaderLength), config_);
     switch (result.status) {
     case ParseResult::Status::Ok:
-      pending_buffer_.drain(HeaderLength);               // 从累计缓冲扣头
+      // forward_header=true（默认）保留协议头，原样转发给上游；
+      // forward_header=false 时剥离协议头，仅转发游戏数据。
+      if (!config_.forward_header) {
+        pending_buffer_.drain(HeaderLength);               // 从累计缓冲扣头
+      }
       setTargetFilterState(result.target.value());       // 设 dynamic_host/port
       read_callbacks_->continueReading();                // ③ 续链：触发 sni_dynamic_forward_proxy.onNewConnection
       return Network::FilterStatus::Continue;            // 剩余字节透传
@@ -363,6 +375,9 @@ listeners:
           "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.session.header_routing.v3.HeaderRouting
           magic: 85
           version: 1
+          # 可选字段，默认 false：剥离 8B 头部仅转发游戏数据；
+          # true：8B 头部原封不动转发给上游（需上游协议容忍/消费头部）。
+          forward_header: false
       - name: envoy.filters.udp.session.dynamic_forward_proxy
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.session.dynamic_forward_proxy.v3.FilterConfig
@@ -385,6 +400,9 @@ listeners:
         "@type": type.googleapis.com/envoy.extensions.filters.network.header_routing.v3.HeaderRouting
         magic: 85
         version: 1
+        # 可选字段，默认 true：8B 头部原封不动转发给上游（需上游协议容忍/消费头部）；
+        # false：剥离 8B 头部仅转发游戏数据。
+        forward_header: true
     - name: envoy.filters.network.sni_dynamic_forward_proxy
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
@@ -510,12 +528,66 @@ clusters:
 3. **重连**：连接断开重连后，新连接需重新带头；
 4. **无确认状态机**：TCP 可靠有序，连接建立即"会话建立"，无需"确认前/后"区分。
 
-### 13.4 契约清单（客户端 ↔ Envoy 必须对齐）
+### 13.4 业务层决策逻辑（带还是不带）
+
+> 客户端发送每个包时，只需回答一个布尔问题即可决定带不带 8B 头。两个协议的决策信号不同，但共同原则一致：**只在需要让 Envoy 建立/确认路由的阶段带头，路由就绪后不带头**。
+
+**UDP —— 决策信号：是否收到过房间首响应**
+
+```
+发一个数据包前：这个会话是否已收到过房间服务器的任何响应？
+
+  没收到 → 带头（8B头 + 游戏数据）
+  收到过 → 不带头（纯游戏数据）
+```
+
+```cpp
+bool confirmed = false; // 申请到房间后、首次发包前为 false
+
+// 每次发送前：
+bool with_header = !confirmed;
+
+// 每次收到房间服务器的响应包后：
+confirmed = true;
+```
+
+- **"首响应"定义**：来自目标房间的**第一个回包**（游戏协议的握手回复、进房确认、首个状态帧等，天然复用，无需新机制）；收到任意一个即确认会话已建立、路由已生效；
+- **首次发包/首包丢失重发**：都带头——Envoy 端 `header_handled_` 未置位时，任何重发的带头包都能自愈建会话；
+- **确认后正常发包**：不带头——省 8 字节/包（游戏 UDP 小包高频，头占比可达 20%+）；
+- **换房间**：换源端口 → 新四元组 → 新会话 → 回到未确认 → 重新带头；
+- **确认后误带头的后果**：Envoy 已置 `header_handled_`，8B 头被**透传**给房间服务器 → 数据错位、游戏协议解析失败，客户端状态机必须严格。
+
+**TCP —— 决策信号：这个连接是否已发过数据**
+
+```
+连接建立后，第一次写数据前：这个连接发过数据没有？
+
+  没发过 → 带头（建议 头+首个游戏数据 拼一次 send）
+  发过   → 不带头
+```
+
+```cpp
+bool header_sent = false; // connect 成功后为 false
+
+// 每次发送前：
+bool with_header = !header_sent;
+if (with_header) {
+  header_sent = true; // 只带一次
+}
+
+// 重连成功后：
+header_sent = false; // 新连接必须重新带头
+```
+
+- **为何只带一次**：TCP 可靠有序，连接建立 = 会话建立，Envoy 收到首包即完成路由，无"确认"等待期；
+- **为何重连要重置**：重连 = 新连接 = 新会话，`header_sent` 必须复位，否则新会话首包无头被当畸形关闭。
+
+### 13.5 契约清单（客户端 ↔ Envoy 必须对齐）
 
 | 项 | 契约 |
 |---|---|
 | 头部字节序 | RoomIP 网络序、RoomPort 大端 |
-| UDP 带头规则 | 收到房间首响应前带头，之后不带头 |
+| UDP 带头规则 | 默认（forward_header=true）：首包带头选路，头部透传给上游；确认后可不带头，或始终带头（每包头部透传，需上游协议兼容）。forward_header=false：收到房间首响应前带头，之后不带头（头部被剥离） |
 | UDP 换房间 | 更换源端口（新四元组） |
 | TCP 带头规则 | 连接最前端一次性带头 |
 | 响应方向 | 房间服务器回包**不带**头部，客户端按原游戏协议解析 |

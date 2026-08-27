@@ -41,11 +41,13 @@ std::string makeHeader(uint8_t magic, uint8_t version, uint32_t ip, uint16_t por
 
 class HeaderRoutingUdpFilterTest : public testing::Test {
 public:
-  void setup(uint32_t magic = 0x55, uint32_t version = 1) {
+  void setup(uint32_t magic = 0x55, uint32_t version = 1, bool forward_header = true) {
     envoy::extensions::filters::udp::udp_proxy::session::header_routing::v3::HeaderRouting
         proto_config;
     proto_config.set_magic(magic);
     proto_config.set_version(version);
+    // 默认参数与产品默认（true=透传头部）对齐；剥离语义的用例显式传 false。
+    proto_config.set_forward_header(forward_header);
     config_ = std::make_shared<HeaderRoutingUdpFilterConfig>(proto_config, context_);
     filter_ = std::make_unique<HeaderRoutingUdpFilter>(config_);
     filter_->initializeReadFilterCallbacks(callbacks_);
@@ -68,9 +70,9 @@ public:
   NiceMock<StreamInfo::MockStreamInfo> stream_info_;
 };
 
-// ① 阻断 + 首包解析：剥离头部、写 filter state、续链恰好一次。
+// ① 阻断 + 首包解析：剥离头部（forward_header=false）、写 filter state、续链恰好一次。
 TEST_F(HeaderRoutingUdpFilterTest, ParsesAndStripsHeaderOnFirstDatagram) {
-  setup();
+  setup(0x55, 1, false);
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData data = makeDatagram(makeHeader(0x55, 1, 0x0A000003, 8600), "game");
@@ -94,7 +96,7 @@ TEST_F(HeaderRoutingUdpFilterTest, ParsesAndStripsHeaderOnFirstDatagram) {
 
 // 已确认（header_handled_ == true）：后续数据报透传，不再解析/剥离/续链。
 TEST_F(HeaderRoutingUdpFilterTest, PassesThroughAfterHeaderHandled) {
-  setup();
+  setup(0x55, 1, false);
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData first = makeDatagram(makeHeader(0x55, 1, 0x0A000003, 8600), "game");
@@ -144,7 +146,7 @@ TEST_F(HeaderRoutingUdpFilterTest, DropsShortDatagram) {
 
 // 自定义 magic/version 配置生效：默认配置下该头为畸形，自定义配置下可解析。
 TEST_F(HeaderRoutingUdpFilterTest, UsesCustomMagicAndVersion) {
-  setup(0xAA, 3);
+  setup(0xAA, 3, false);
   EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
 
   Network::UdpRecvData data = makeDatagram(makeHeader(0xAA, 3, 0x0A000004, 9000), "game");
@@ -155,6 +157,42 @@ TEST_F(HeaderRoutingUdpFilterTest, UsesCustomMagicAndVersion) {
       "envoy.upstream.dynamic_host");
   ASSERT_NE(nullptr, host);
   EXPECT_EQ("10.0.0.4", host->asString());
+}
+
+// forward_header=true：解析选路后保留 8B 头，头部连同游戏数据原样转发给上游。
+TEST_F(HeaderRoutingUdpFilterTest, ForwardsHeaderWhenConfigured) {
+  setup(); // 默认 true（透传头部）
+  EXPECT_EQ(ReadFilterStatus::StopIteration, filter_->onNewSession());
+
+  const std::string header = makeHeader(0x55, 1, 0x0A000003, 8600);
+  Network::UdpRecvData data = makeDatagram(header, "game");
+
+  EXPECT_CALL(callbacks_, continueFilterChain()).Times(1);
+  EXPECT_EQ(ReadFilterStatus::Continue, filter_->onData(data));
+
+  // 头部保留：8B 头 + 4B 游戏数据原样转发（不剥离）。
+  EXPECT_EQ(12U, data.buffer_->length());
+  EXPECT_EQ(header + "game", data.buffer_->toString());
+  // filter state 仍写入选路信息。
+  const auto* host = stream_info_.filterState()->getDataReadOnly<::Envoy::Router::StringAccessor>(
+      "envoy.upstream.dynamic_host");
+  ASSERT_NE(nullptr, host);
+  EXPECT_EQ("10.0.0.3", host->asString());
+  const auto* port = stream_info_.filterState()->getDataReadOnly<StreamInfo::UInt32Accessor>(
+      "envoy.upstream.dynamic_port");
+  ASSERT_NE(nullptr, port);
+  EXPECT_EQ(8600, port->value());
+}
+
+// 未配置 forward_header 字段：走产品默认 true（透传头部）分支。
+TEST_F(HeaderRoutingUdpFilterTest, DefaultsToForwardingHeader) {
+  envoy::extensions::filters::udp::udp_proxy::session::header_routing::v3::HeaderRouting
+      proto_config;
+  proto_config.set_magic(0x55);
+  proto_config.set_version(1);
+  // 故意不设置 forward_header：验证 has_forward_header()==false 时默认 true。
+  config_ = std::make_shared<HeaderRoutingUdpFilterConfig>(proto_config, context_);
+  EXPECT_TRUE(config_->parserConfig().forward_header);
 }
 
 } // namespace
